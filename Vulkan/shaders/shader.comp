@@ -1,0 +1,62 @@
+#version 450
+
+struct Particle {
+    vec4 position; // actual x, y, z are calculated; w is unused
+    vec4 velocity; // x: radius, y: angle, z: speed, w: spreadX
+    vec4 color;    // x,y,z: RGB; w: spreadY
+};
+
+layout(push_constant) uniform PushConstants {
+    float deltaTime;
+} pc;
+
+layout(std430, binding = 0) readonly buffer ParticleSSBOIn { Particle particlesIn[]; };
+layout(std430, binding = 1) buffer ParticleSSBOOut { Particle particlesOut[]; };
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    Particle p = particlesIn[index];
+
+    // 1. Extract Parameters
+    float radius = p.velocity.x;
+    float angle  = p.velocity.y;
+    float speed  = p.velocity.z;
+    
+    // Retrieve the offsets from their "storage slots"
+    float spreadX = p.velocity.w;
+    float spreadY = p.color.w;
+    float spreadZ = p.position.z; // we stored this in C++ z
+
+    // 2. Advance the orbital angle
+    angle += speed * pc.deltaTime;
+    if (angle > 6.283185) angle -= 6.283185;
+
+    // 3. Galaxy Shape
+    float eccentricity = 0.6; 
+    float tightness = 4.5; 
+    float spiralRotation = radius * tightness;
+
+    // 4. Calculate Ellipse Position
+    float x_raw = radius * cos(angle);
+    float y_raw = radius * eccentricity * sin(angle);
+
+    // 5. Rotate Ellipse to create the Spiral Arm
+    vec2 rotated;
+    rotated.x = x_raw * cos(spiralRotation) - y_raw * sin(spiralRotation);
+    rotated.y = x_raw * sin(spiralRotation) + y_raw * cos(spiralRotation);
+
+    // 6. Apply Clutter and Height
+    vec4 finalPos;
+    finalPos.x = rotated.x + spreadX;
+    finalPos.y = rotated.y + spreadY;
+    finalPos.z = spreadZ; 
+    finalPos.w = 1.0; // Standard w for clip space
+
+    // 7. Write Back
+    particlesOut[index].position = finalPos;
+    // Update the angle in the velocity vector for the next frame
+    particlesOut[index].velocity = vec4(radius, angle, speed, spreadX);
+    particlesOut[index].color = p.color;
+}
