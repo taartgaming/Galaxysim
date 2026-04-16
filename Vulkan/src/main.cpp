@@ -16,8 +16,11 @@
 #include <tiny_obj_loader.h>
 
 #include <chrono>
+//class include
 #include "Camera.cpp"
+#include "engine/vulkanBuffer.h"
 
+//lib include
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
@@ -339,6 +342,7 @@ private:
     std::vector<VkBuffer> shaderStorageBuffers;
     std::vector<VkDeviceMemory> shaderStorageBuffersMemory; 
 
+    std::vector<std::unique_ptr<VulkanBuffer>> uniformBufferResources;
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
@@ -519,10 +523,7 @@ private:
         vkDestroyImage(device, textureImage, nullptr);
         vkFreeMemory(device, textureImageMemory, nullptr);
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkDestroyBuffer(device, uniformBuffers[i], nullptr);
-            vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
-        }
+
 
         vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
@@ -1824,14 +1825,21 @@ private:
     void createUniformBuffers() {
         VkDeviceSize bufferSize = sizeof(UniformBufferObject);
 
-        uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-        uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+        uniformBufferResources.resize(MAX_FRAMES_IN_FLIGHT);
         uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+            // 1. Create the buffer resource
+            uniformBufferResources[i] = std::make_unique<VulkanBuffer>(
+                device,
+                physicalDevice,
+                bufferSize,
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+            );
 
-            vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+            // 2. Map it (using our new map helper)
+            vkMapMemory(device, uniformBufferResources[i]->getMemory(), 0, bufferSize, 0, &uniformBuffersMapped[i]);
         }
     }
 
@@ -2015,7 +2023,7 @@ private:
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             /* ---- UBO ----------------------------------------------------- */
             VkDescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = uniformBuffers[i];
+            bufferInfo.buffer = uniformBufferResources[i]->getBuffer(); // New way
             bufferInfo.offset = 0;
             bufferInfo.range = sizeof(UniformBufferObject);
 
