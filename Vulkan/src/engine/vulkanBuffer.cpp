@@ -30,9 +30,6 @@ VulkanBuffer::VulkanBuffer(VkDevice device, VkPhysicalDevice physicalDevice, VkD
 }
 
 VulkanBuffer::~VulkanBuffer() {
-    if (mapped) unmap();
-    if (buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, buffer, nullptr);
-    if (memory != VK_NULL_HANDLE) vkFreeMemory(device, memory, nullptr);
 }
 
 void VulkanBuffer::map(VkDeviceSize size, VkDeviceSize offset) {
@@ -42,6 +39,11 @@ void VulkanBuffer::map(VkDeviceSize size, VkDeviceSize offset) {
 void VulkanBuffer::unmap() {
     vkUnmapMemory(device, memory);
     mapped = nullptr;
+}
+void VulkanBuffer::cleanup() {
+    if (mapped) unmap();
+    if (memory != VK_NULL_HANDLE) vkFreeMemory(device, memory, nullptr);
+    if (buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, buffer, nullptr);
 }
 
 void VulkanBuffer::copyTo(void* data, VkDeviceSize size) {

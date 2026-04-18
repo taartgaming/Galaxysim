@@ -1,11 +1,13 @@
 #pragma once
 #include <vulkan/vulkan.h>
 #include <stdexcept>
+#include "../Vertex.hpp"
 
 class VulkanBuffer {
 public:
     VulkanBuffer(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size,
         VkBufferUsageFlags usage, VkMemoryPropertyFlags properties);
+	VulkanBuffer() = default;
     ~VulkanBuffer();
 
     // Prevent accidental copying of GPU resources
@@ -18,6 +20,7 @@ public:
     void map(VkDeviceSize size = VK_WHOLE_SIZE, VkDeviceSize offset = 0);
     void unmap();
     void copyTo(void* data, VkDeviceSize size);
+	void cleanup();
 
 private:
     uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter,

@@ -12,13 +12,16 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
+
 
 #include <chrono>
 //class include
 #include "Camera.cpp"
 #include "engine/vulkanBuffer.h"
+#include "engine/Mesh.h"
+#include "engine/ModelLoader.h"
+#include "Vertex.hpp"
+
 
 //lib include
 #include <iostream>
@@ -36,10 +39,11 @@
 #include <unordered_map>
 #include <random>
 
+
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
-const uint32_t PARTICLE_COUNT = 8192 * 200;
+const uint32_t PARTICLE_COUNT = 8192 * 70;
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 uint32_t currentFrame = 0;
@@ -169,55 +173,7 @@ struct ComputeUniformBufferObject {
     float deltaTime = 1.0f;
 };
 
-struct Vertex {
-    glm::vec3 pos;
-    glm::vec3 color;
-    glm::vec2 texCoord;
 
-    static VkVertexInputBindingDescription getBindingDescription() {
-        VkVertexInputBindingDescription bindingDescription{};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        return bindingDescription;
-    }
-
-    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
-
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);
-
-        attributeDescriptions[2].binding = 0;
-        attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
-
-        return attributeDescriptions;
-    }
-
-    bool operator==(const Vertex& other) const {
-        return pos == other.pos && color == other.color && texCoord == other.texCoord;
-    }
-};
-
-namespace std {
-    template<> struct hash<Vertex> {
-        size_t operator()(Vertex const& vertex) const {
-            return ((hash<glm::vec3>()(vertex.pos) ^
-                (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
-                (hash<glm::vec2>()(vertex.texCoord) << 1);
-        }
-    };
-}
 
 struct UniformBufferObject {
     alignas(16) glm::mat4 view;
@@ -299,8 +255,6 @@ private:
     VkSurfaceKHR surface;
 
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-    VkDevice device;
-
     VkQueue graphicsQueue;
     VkQueue computeQueue;
     VkQueue presentQueue;
@@ -383,6 +337,13 @@ private:
     VkImage depthImage;
     VkDeviceMemory depthImageMemory;
     VkImageView depthImageView;
+    
+    VkDevice device;
+
+    // 1. Load the data using our utility
+
+    std::unique_ptr<Mesh> vikingRoomMesh;
+
 
     float deltaTime = 0.0f; // Time between current frame and last frame
     float lastFrame = 0.0f; // Time of last frame
@@ -448,10 +409,22 @@ private:
         createTextureImage();
         createTextureImageView();
         createTextureSampler();
-        loadModel();
-        createVertexBuffer();
-        createIndexBuffer();
+        //loadModel();
         createInstanceBuffer();
+
+        auto vikingData = ModelLoader::loadOBJ(MODEL_PATH);
+
+        // 2. Pass that data directly to the Mesh
+        vikingRoomMesh = std::make_unique<Mesh>(
+            device,
+            physicalDevice,
+            commandPool,
+            graphicsQueue,
+            vikingData.vertices,
+            vikingData.indices
+        );
+
+        
         createShaderStorageBuffers();
         createUniformBuffers();
         createComputeUniformBuffers();
@@ -507,6 +480,14 @@ private:
         vkDestroyPipeline(device, computePipeline, nullptr);
         vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
         vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, nullptr);
+		
+        if (vikingRoomMesh) {
+            vikingRoomMesh->destroy();
+        }
+
+        for (auto& buffer : uniformBufferResources) {
+            buffer->cleanup();
+        }
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroyBuffer(device, shaderStorageBuffers[i], nullptr);
@@ -1708,97 +1689,9 @@ private:
         }
     }
 
-    void loadModel() {
-        tinyobj::attrib_t attrib;
-        std::vector<tinyobj::shape_t> shapes;
-        std::vector<tinyobj::material_t> materials;
-        std::string warn, err;
-
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
-            throw std::runtime_error(warn + err);
-        }
-
-        std::unordered_map<Vertex, uint32_t> uniqueVertices{};
-
-        for (const auto& shape : shapes) {
-            for (const auto& index : shape.mesh.indices) {
-                Vertex vertex{};
-
-                vertex.pos = {
-                    attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 1],
-                    attrib.vertices[3 * index.vertex_index + 2]
-                };
-
-                vertex.texCoord = {
-                    attrib.texcoords[2 * index.texcoord_index + 0],
-                    1.0f - attrib.texcoords[2 * index.texcoord_index + 1]  // flip Y
-                };
-
-                vertex.color = { 1.0f, 1.0f, 1.0f };
-
-                if (uniqueVertices.count(vertex) == 0) {
-                    uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-                    vertices.push_back(vertex);
-                }
-
-                indices.push_back(uniqueVertices[vertex]);
-
-
-            }
-        }
-
-        for (int i = 0; i < 10; ++i) {
-            InstanceData d{};
-            d.position = glm::vec3(i * 5.0f, 0.0f, 0.0f);   // 5 units apart
-            d.rotation = glm::vec3(0.0f, 0.0f, 0.0f);       // no rotation
-            d.scale = glm::vec3(1.0f);                   // normal size
-            instances.push_back(d);
-        }
-    }
-
 
     
-    void createVertexBuffer() {
-        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, vertices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
-
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-
-    }
-
-    void createIndexBuffer() {
-        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, indices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-    }
 
     void createInstanceBuffer() {
 
@@ -1875,11 +1768,12 @@ private:
 
         // Initial particle positions on a circle
         std::vector<Particle> particles(PARTICLE_COUNT);
+        std::vector<Particle> par2cles(PARTICLE_COUNT);
 
         for (auto& particle : particles) {
             // 1. Core Orbital Parameters
             // We use sqrt to make the center denser
-            float r = std::sqrt(rndDist(rndEngine)) * 0.8f;
+            float r = std::sqrt(rndDist(rndEngine)) * 10.f;
             float startAngle = rndDist(rndEngine) * 2.0f * 3.14159265f;
 
             // Keplerian-ish speed: inner orbits are much faster
@@ -1889,7 +1783,7 @@ private:
             // These values are static—they don't change, they just offset the math
             float spreadX = (rndDist(rndEngine) - 0.5f) * 0.12f;
             float spreadY = (rndDist(rndEngine) - 0.5f) * 0.12f;
-            float spreadZ = (rndDist(rndEngine) - 0.5f) * 0.04f;
+            float spreadZ = (rndDist(rndEngine) - 0.5f) * 0.4f;
 
             // 3. Store the "DNA" in the vectors
             // Position: We don't calculate the actual x/y here, the shader will do it.
@@ -1904,6 +1798,7 @@ private:
             particle.color = glm::vec4(baseColor, spreadY);
         }
 
+        
         VkDeviceSize bufferSize = sizeof(Particle) * PARTICLE_COUNT;
 
         VkBuffer stagingBuffer;
@@ -2204,19 +2099,15 @@ private:
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-        VkBuffer vertexBuffers[] = { vertexBuffer, instanceBuffer };
-        VkDeviceSize offsets[] = { 0, 0 };
-        vkCmdBindVertexBuffers(commandBuffer, 0, 2, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
-        vkCmdDrawIndexed(commandBuffer, 
-            static_cast<uint32_t>(indices.size()), 
-            static_cast<uint32_t>(instances.size()), 
-            0, 0, 0);
+
+        vikingRoomMesh->draw(commandBuffer, instanceBuffer, 10);
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, particlePipeline);
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, particlePipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &shaderStorageBuffers[currentFrame], offsets);
+        VkBuffer particleBuffers[] = { shaderStorageBuffers[currentFrame], instanceBuffer };
+        VkDeviceSize particleOffsets[] = { 0, 0 };
+        vkCmdBindVertexBuffers(commandBuffer, 0, 2, particleBuffers, particleOffsets);
         vkCmdDraw(commandBuffer, PARTICLE_COUNT, 1, 0, 0);
 
         vkCmdEndRenderPass(commandBuffer);
