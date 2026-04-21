@@ -30,6 +30,15 @@
     <ClCompile Include="src\engine\ModelLoader.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\engine\InstanceGroup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\engine\VulkanTexture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\engine\VulkanPipeline.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\shader.frag" />
@@ -72,6 +81,18 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\engine\ModelLoader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\InstanceGroup.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\InstanceData.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\VulkanTexture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\VulkanPipeline.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

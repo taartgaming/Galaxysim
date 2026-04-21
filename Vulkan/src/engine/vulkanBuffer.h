@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include "../Vertex.hpp"
 
+
 class VulkanBuffer {
 public:
     VulkanBuffer(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size,
@@ -23,8 +24,7 @@ public:
 	void cleanup();
 
 private:
-    uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter,
-        VkMemoryPropertyFlags properties);
+
 
     VkDevice device;
     VkBuffer buffer = VK_NULL_HANDLE;

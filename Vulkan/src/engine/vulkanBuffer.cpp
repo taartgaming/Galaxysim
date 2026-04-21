@@ -1,4 +1,5 @@
 #include "VulkanBuffer.h"
+#include "VulkanUtils.hpp"
 
 VulkanBuffer::VulkanBuffer(VkDevice device, VkPhysicalDevice physicalDevice, VkDeviceSize size,
     VkBufferUsageFlags usage, VkMemoryPropertyFlags properties)
@@ -20,7 +21,7 @@ VulkanBuffer::VulkanBuffer(VkDevice device, VkPhysicalDevice physicalDevice, VkD
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties);
+    allocInfo.memoryTypeIndex = VulkanUtils::findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties);
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &memory) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate buffer memory!");
@@ -51,15 +52,3 @@ void VulkanBuffer::copyTo(void* data, VkDeviceSize size) {
     memcpy(mapped, data, (size_t)size);
 }
 
-uint32_t VulkanBuffer::findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter,
-    VkMemoryPropertyFlags properties) {
-    VkPhysicalDeviceMemoryProperties memProperties;
-    vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
-
-    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-            return i;
-        }
-    }
-    throw std::runtime_error("failed to find suitable memory type!");
-}

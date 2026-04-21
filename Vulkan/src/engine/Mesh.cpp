@@ -21,9 +21,16 @@ Mesh::Mesh(VkDevice device, VkPhysicalDevice physicalDevice, VkCommandPool comma
 }
 
 void Mesh::draw(VkCommandBuffer commandBuffer, VkBuffer instanceBuffer, uint32_t instanceCount) {
-    VkBuffer buffers[] = { vertexBuffer->getBuffer(), instanceBuffer };
-    VkDeviceSize offsets[] = { 0, 0 };
-    vkCmdBindVertexBuffers(commandBuffer, 0, 2, buffers, offsets);
+    VkBuffer vertBuffers[] = { vertexBuffer->getBuffer() };
+    VkDeviceSize vertOffsets[] = { 0 };
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertBuffers, vertOffsets);
+
+    if (instanceBuffer != VK_NULL_HANDLE) {
+        VkBuffer instBuffers[] = { instanceBuffer };
+        VkDeviceSize instOffsets[] = { 0 };
+        vkCmdBindVertexBuffers(commandBuffer, 1, 1, instBuffers, instOffsets);
+    }
+
     vkCmdBindIndexBuffer(commandBuffer, indexBuffer->getBuffer(), 0, VK_INDEX_TYPE_UINT32);
     vkCmdDrawIndexed(commandBuffer, indexCount, instanceCount, 0, 0, 0);
 }
@@ -56,13 +63,6 @@ void Mesh::createBufferWithStaging(VkDevice device, VkPhysicalDevice physicalDev
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VulkanUtils::copyBuffer(device, commandPool, graphicsQueue,
         stagingBuffer.getBuffer(), targetBuffer->getBuffer(), size);
+    stagingBuffer.cleanup();
 
-    // 4. Copy from staging to target (You need your helper here)
-    // For now, you can copy the logic from your old copyBuffer() helper
-    // Or call a utility function if you moved it.
-
-    // Example (pseudo-code using your existing logic):
-    // copyBuffer(stagingBuffer.getBuffer(), targetBuffer->getBuffer(), size);
-
-    // stagingBuffer goes out of scope and is destroyed automatically here (RAII!)
 }

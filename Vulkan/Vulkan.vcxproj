@@ -131,11 +131,14 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\engine\InstanceGroup.cpp" />
     <ClCompile Include="src\engine\ModelLoader.cpp" />
     <ClCompile Include="src\engine\Mesh.cpp" />
     <ClCompile Include="src\Camera.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\engine\vulkanBuffer.cpp" />
+    <ClCompile Include="src\engine\VulkanTexture.cpp" />
+    <ClCompile Include="src\engine\VulkanPipeline.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\compute.spv" />
@@ -165,11 +168,15 @@
     </Text>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\engine\InstanceGroup.h" />
     <ClInclude Include="src\engine\ModelLoader.h" />
     <ClInclude Include="src\engine\Mesh.h" />
     <ClInclude Include="src\engine\VulkanUtils.hpp" />
+    <ClInclude Include="src\InstanceData.hpp" />
     <ClInclude Include="src\Vertex.hpp" />
     <ClInclude Include="src\engine\vulkanBuffer.h" />
+    <ClInclude Include="src\engine\VulkanTexture.h" />
+    <ClInclude Include="src\engine\VulkanPipeline.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
