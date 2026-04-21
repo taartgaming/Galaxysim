@@ -17,7 +17,7 @@ VulkanPipeline::VulkanPipeline(
 }
 
 VulkanPipeline::~VulkanPipeline() {
-    vkDestroyPipeline(device, graphicsPipeline, nullptr);
+    //vkDestroyPipeline(device, graphicsPipeline, nullptr);
 }
 
 void VulkanPipeline::bind(VkCommandBuffer commandBuffer) {

@@ -20,9 +20,12 @@
 #include "engine/InstanceGroup.h"
 #include "engine/VulkanTexture.h"
 #include "engine/VulkanPipeline.h"
+#include "engine/VulkanDescriptorWriter.h"
+
 #include "Vertex.hpp"
 #include "InstanceData.hpp"
 #include "engine/VulkanUtils.hpp"
+
 
 
 
@@ -135,6 +138,11 @@ struct Particle
         return attributeDescriptions;
     }
 
+    static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptionsCombined() {
+        auto attr = getAttributeDescriptions(); // This gets your existing array
+        return std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end());
+    }
+
 
 };
 
@@ -236,9 +244,12 @@ private:
 
 
     VkRenderPass renderPass;
-    VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     std::unique_ptr<VulkanPipeline> vikingPipeline;
+
+    std::unique_ptr<VulkanDescriptorPool> globalPool{};
+    std::unique_ptr<VulkanDescriptorSetLayout> meshDescriptorLayout{};
+    std::unique_ptr<VulkanDescriptorSetLayout> computeDescriptorLayout{};
 
     VkDescriptorSetLayout computeDescriptorSetLayout;
     VkPipelineLayout computePipelineLayout;
@@ -276,7 +287,7 @@ private:
     std::vector<VkDeviceMemory> computeUniformBuffersMemory;
     std::vector<void*> computeUniformBuffersMapped;
 
-    VkDescriptorPool descriptorPool;
+
     std::vector<VkDescriptorSet> descriptorSets;
     std::vector<VkDescriptorSet> computeDescriptorSets;
 
@@ -367,6 +378,7 @@ private:
         createDescriptorSetLayout();
         createComputeDescriptorSetLayout();
         createPipelineLayouts();
+
         createGraphicsPipeline();
         createComputePipeline();
         createParticlePipeline();
@@ -451,54 +463,36 @@ private:
         vikingRoomMesh.reset();
         vikingInstances.reset();
         vikingTexture.reset();
-
-        for (auto& buffer : uniformBufferResources) {
-            buffer.reset(); // If using unique_ptr, otherwise buffer->destroy()
-        }
-
-        if (vikingRoomMesh) {
-            vikingRoomMesh->destroy();
-        }
-
-
+        vikingPipeline.reset();
+        particlePipeline.reset(); // If it's a unique_ptr now
+        globalPool.reset();
+        meshDescriptorLayout.reset();
+        computeDescriptorLayout.reset();
         uniformBufferResources.clear();
 
         // 2. Clear infrastructure
         cleanupSwapChain();
 
         // 3. Clear remaining manual buffers (like particles)
+// 3. Manual Compute/Particle resources (ONLY ONCE)
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroyBuffer(device, shaderStorageBuffers[i], nullptr);
             vkFreeMemory(device, shaderStorageBuffersMemory[i], nullptr);
+
             vkDestroyBuffer(device, computeUniformBuffers[i], nullptr);
             vkFreeMemory(device, computeUniformBuffersMemory[i], nullptr);
+
+            vkDestroySemaphore(device, computeFinishedSemaphores[i], nullptr);
+            vkDestroyFence(device, computeInFlightFences[i], nullptr);
         }
         savePipelineCache("pipeline_cache.bin");
         vkDestroyPipelineCache(device, pipelineCache, nullptr);
 
-      
-        vkDestroyPipelineLayout(device, particlePipelineLayout, nullptr);
+   
         vkDestroyPipeline(device, computePipeline, nullptr);
         vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
         vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, nullptr);
 		
-
-
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkDestroyBuffer(device, shaderStorageBuffers[i], nullptr);
-            vkFreeMemory(device, shaderStorageBuffersMemory[i], nullptr);
-            vkDestroyBuffer(device, computeUniformBuffers[i], nullptr);
-            vkFreeMemory(device, computeUniformBuffersMemory[i], nullptr);
-            vkDestroySemaphore(device, computeFinishedSemaphores[i], nullptr);
-            vkDestroyFence(device, computeInFlightFences[i], nullptr);
-        }
-
-
-
-
-        vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-
-        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
         vkDestroyBuffer(device, instanceBuffer, nullptr);
         vkFreeMemory(device, instanceBufferMemory, nullptr);
@@ -532,13 +526,9 @@ private:
         vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyInstance(instance, nullptr);
 
-
-
         glfwDestroyWindow(window);
 
         glfwTerminate();
-
-
     }
 
 
@@ -879,70 +869,15 @@ private:
         }
     }
 
-    void createComputeDescriptorSetLayout() {
-        std::array<VkDescriptorSetLayoutBinding, 2> layoutBindings{};
-
-
-        // 1 – Storage buffer (previous frame)
-        layoutBindings[0].binding = 0;
-        layoutBindings[0].descriptorCount = 1;
-        layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        layoutBindings[0].pImmutableSamplers = nullptr;
-        layoutBindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-        // 2 – Storage buffer (current frame)
-        layoutBindings[1].binding = 1;
-        layoutBindings[1].descriptorCount = 1;
-        layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        layoutBindings[1].pImmutableSamplers = nullptr;
-        layoutBindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-        VkDescriptorSetLayoutCreateInfo layoutInfo{};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = static_cast<uint32_t>(layoutBindings.size());
-        layoutInfo.pBindings = layoutBindings.data();
-
-        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &computeDescriptorSetLayout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create compute descriptor set layout!");
-        }
-    }
-
-
     void createDescriptorSetLayout() {
-        VkDescriptorSetLayoutBinding uboLayoutBinding{};
-        uboLayoutBinding.binding = 0;
-        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;   
-        uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
-
-        VkDescriptorSetLayoutBinding samplerLayoutBinding{};
-        samplerLayoutBinding.binding = 1;
-        samplerLayoutBinding.descriptorCount = 1;
-        samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        samplerLayoutBinding.pImmutableSamplers = nullptr;
-        samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-        std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
-
-        VkDescriptorSetLayoutCreateInfo layoutInfo{};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
-        layoutInfo.pBindings = bindings.data();
-
-        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
-        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-
-        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
-
-
+        meshDescriptorLayout = VulkanDescriptorSetLayout::Builder(device)
+            .addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT)
+            .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .build();
     }
 
     void createComputePipeline() {
+        // 1. Shaders
         auto computeShaderCode = readFile("shaders/compute.spv");
         VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
 
@@ -952,19 +887,31 @@ private:
         computeShaderStageInfo.module = computeShaderModule;
         computeShaderStageInfo.pName = "main";
 
-        // Push?constant for deltaTime 
+        // 2. Push Constants
         VkPushConstantRange compPush{};
         compPush.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
         compPush.offset = 0;
-        compPush.size = sizeof(float);   // deltaTime
+        compPush.size = sizeof(float);
 
-        // pipeline layout
+        // 3. CREATE COMPUTE PIPELINE LAYOUT (The missing piece)
+        VkDescriptorSetLayout layouts[] = { computeDescriptorLayout->getDescriptorSetLayout() };
 
+        VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+        pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = layouts;
+        pipelineLayoutInfo.pushConstantRangeCount = 1;
+        pipelineLayoutInfo.pPushConstantRanges = &compPush;
 
-        /* ---- Compute pipeline ---------------------------------------------- */
+        // Use your class member computePipelineLayout
+        if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create compute pipeline layout!");
+        }
+
+        // 4. PIPELINE
         VkComputePipelineCreateInfo pipelineInfo{};
         pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        pipelineInfo.layout = computePipelineLayout;
+        pipelineInfo.layout = computePipelineLayout; // Correct handle usage
         pipelineInfo.stage = computeShaderStageInfo;
 
         if (vkCreateComputePipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
@@ -980,10 +927,12 @@ private:
         pushConstantRange.offset = 0;
         pushConstantRange.size = sizeof(glm::mat4);
 
+        VkDescriptorSetLayout setLayout = meshDescriptorLayout->getDescriptorSetLayout();
+
         VkPipelineLayoutCreateInfo graphicsLayoutInfo{};
         graphicsLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         graphicsLayoutInfo.setLayoutCount = 1;
-        graphicsLayoutInfo.pSetLayouts = &descriptorSetLayout;
+        graphicsLayoutInfo.pSetLayouts = &setLayout;
         graphicsLayoutInfo.pushConstantRangeCount = 1;
         graphicsLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
@@ -1016,24 +965,19 @@ private:
         PipelineConfigInfo configInfo{};
         VulkanPipeline::defaultPipelineConfigInfo(configInfo);
 
-        // Particles use POINT topology, not TRIANGLE
         configInfo.inputAssemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
 
-        // IMPORTANT: Only bind the Particle data (Binding 0 only!)
-        auto bindingDesc = Particle::getBindingDescription();
-        auto attrDescs = Particle::getAttributeDescriptions();
+        // Use the struct vectors to avoid the dangling pointer crash
+        configInfo.bindingDescriptions = { Particle::getBindingDescription() };
+        configInfo.attributeDescriptions = Particle::getAttributeDescriptionsCombined(); // Ensure this helper exists
 
-        configInfo.vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        configInfo.vertexInputInfo.vertexBindingDescriptionCount = 1;
-        configInfo.vertexInputInfo.pVertexBindingDescriptions = &bindingDesc;
-        configInfo.vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attrDescs.size());
-        configInfo.vertexInputInfo.pVertexAttributeDescriptions = attrDescs.data();
+        configInfo.refreshVertexInputPointers();
 
+        // Ensure particlePipelineLayout was created similarly to createPipelineLayout()
         configInfo.pipelineLayout = particlePipelineLayout;
         configInfo.renderPass = renderPass;
         configInfo.multisampleInfo.rasterizationSamples = msaaSamples;
 
-        // Use the same class!
         particlePipeline = std::make_unique<VulkanPipeline>(
             device,
             "shaders/particle_vert.spv",
@@ -1363,77 +1307,33 @@ private:
     }
 
     void createDescriptorPool() {
-        std::array<VkDescriptorPoolSize, 3> poolSizes{};
-
-        // UBOs (graphics + compute)
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * 2;
-
-        // Sampler (graphics only)
-        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-
-        // Storage buffers (compute only)
-        poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        poolSizes[2].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * 2;
-
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-        poolInfo.pPoolSizes = poolSizes.data();
-        poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * 2;   // 1 set per frame for each pipeline
-
-        if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor pool!");
-        }
+        globalPool = VulkanDescriptorPool::Builder(device)
+            .setMaxSets(MAX_FRAMES_IN_FLIGHT * 2) // Enough for mesh and particles
+            .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT)
+            .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT)
+            .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT * 2)
+            .build();
     }
 
 
+    void createComputeDescriptorSetLayout() {
+        computeDescriptorLayout = VulkanDescriptorSetLayout::Builder(device)
+            .addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT) // Prev frame
+            .addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT) // Curr frame
+            .build();
+    }
+
     void createComputeDescriptorSets() {
-        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, computeDescriptorSetLayout);
-
-        VkDescriptorSetAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-        allocInfo.pSetLayouts = layouts.data();
-
         computeDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-        if (vkAllocateDescriptorSets(device, &allocInfo, computeDescriptorSets.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate compute descriptor sets!");
-        }
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            // Prepare the buffer infos
+            auto prevBufferInfo = VkDescriptorBufferInfo{ shaderStorageBuffers[(i + 1) % 2], 0, sizeof(Particle) * PARTICLE_COUNT };
+            auto currBufferInfo = VkDescriptorBufferInfo{ shaderStorageBuffers[i], 0, sizeof(Particle) * PARTICLE_COUNT };
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-
-            /* Storage buffer – previous frame */
-            VkDescriptorBufferInfo storagePrev{};
-            storagePrev.buffer = shaderStorageBuffers[(i + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT];
-            storagePrev.offset = 0;
-            storagePrev.range = sizeof(Particle) * PARTICLE_COUNT;
-
-            /* Storage buffer – current frame */
-            VkDescriptorBufferInfo storageCurr{};
-            storageCurr.buffer = shaderStorageBuffers[i];
-            storageCurr.offset = 0;
-            storageCurr.range = sizeof(Particle) * PARTICLE_COUNT;
-
-            std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
-
-            descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[0].dstSet = computeDescriptorSets[i];
-            descriptorWrites[0].dstBinding = 0;
-            descriptorWrites[0].descriptorCount = 1;
-            descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            descriptorWrites[0].pBufferInfo = &storagePrev;
-
-            descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrites[1].dstSet = computeDescriptorSets[i];
-            descriptorWrites[1].dstBinding = 1;
-            descriptorWrites[1].descriptorCount = 1;
-            descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            descriptorWrites[1].pBufferInfo = &storageCurr;
-
-            vkUpdateDescriptorSets(device, 2, descriptorWrites.data(), 0, nullptr);
+            VulkanDescriptorWriter(*computeDescriptorLayout, *globalPool)
+                .writeBuffer(0, &prevBufferInfo)
+                .writeBuffer(1, &currBufferInfo)
+                .build(computeDescriptorSets[i]);
         }
     }
 
@@ -1441,55 +1341,15 @@ private:
   
 
     void createDescriptorSets() {
-        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
-
-        VkDescriptorSetAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-        allocInfo.pSetLayouts = layouts.data();
-
         descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-        if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate descriptor sets!");
-        }
+        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            auto bufferInfo = uniformBufferResources[i]->descriptorInfo();
+            auto imageInfo = vikingTexture->descriptorInfo();
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            /* ---- UBO ----------------------------------------------------- */
-            VkDescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = uniformBufferResources[i]->getBuffer(); // New way
-            bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
-
-            /* ---- Sampler --------------------------------------------------- */
-            VkDescriptorImageInfo imageInfo{};
-            imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            imageInfo.imageView = vikingTexture->getImageView();
-            imageInfo.sampler = vikingTexture->getSampler();
-
-            /* ---- Write?set for binding?1 (sampler) ----------------------- */
-            VkWriteDescriptorSet descriptorWrite{};
-            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrite.dstSet = descriptorSets[i];
-            descriptorWrite.dstBinding = 1;
-            descriptorWrite.dstArrayElement = 0;
-            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            descriptorWrite.descriptorCount = 1;
-            descriptorWrite.pImageInfo = &imageInfo;
-
-            vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
-
-            /* ---- Write?set for binding?0 (UBO) – we bind it in the command buffer */
-            VkWriteDescriptorSet uboWrite{};
-            uboWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            uboWrite.dstSet = descriptorSets[i];
-            uboWrite.dstBinding = 0;
-            uboWrite.dstArrayElement = 0;
-            uboWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            uboWrite.descriptorCount = 1;
-            uboWrite.pBufferInfo = &bufferInfo;
-
-            vkUpdateDescriptorSets(device, 1, &uboWrite, 0, nullptr);
+            VulkanDescriptorWriter(*meshDescriptorLayout, *globalPool)
+                .writeBuffer(0, &bufferInfo)
+                .writeImage(1, &imageInfo)
+                .build(descriptorSets[i]);
         }
     }
 

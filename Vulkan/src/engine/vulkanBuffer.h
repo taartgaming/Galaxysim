@@ -18,6 +18,10 @@ public:
     VkBuffer getBuffer() const { return buffer; }
     VkDeviceMemory getMemory() const { return memory; }
 
+    VkDescriptorBufferInfo descriptorInfo(VkDeviceSize size = VK_WHOLE_SIZE, VkDeviceSize offset = 0) {
+        return VkDescriptorBufferInfo{ buffer, offset, size };
+    }
+
     void map(VkDeviceSize size = VK_WHOLE_SIZE, VkDeviceSize offset = 0);
     void unmap();
     void copyTo(void* data, VkDeviceSize size);

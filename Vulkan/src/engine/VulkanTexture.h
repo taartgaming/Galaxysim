@@ -11,6 +11,15 @@ public:
         VkQueue graphicsQueue, const std::string& path);
     ~VulkanTexture();
 
+    VkDescriptorImageInfo descriptorInfo() {
+        VkDescriptorImageInfo info{};
+        info.sampler = sampler;
+        info.imageView = imageView;
+        // CRITICAL: Must not be UNDEFINED
+        info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        return info;
+    }
+
     void destroy();
     VkImageView getImageView() const { return imageView; }
     VkSampler getSampler() const { return sampler; }
