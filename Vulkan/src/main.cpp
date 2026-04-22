@@ -1695,19 +1695,23 @@ private:
 
     void createUniverse() {
         
-        std::default_random_engine rnd(42); // Seed for consistency
-        std::uniform_real_distribution<float> posDist(-20.0f, 20.0f);
+        std::default_random_engine rnd(static_cast<unsigned>(time(nullptr))); 
+        std::uniform_real_distribution<float> posDist(-200.0f, 200.0f);
+
+        std::uniform_real_distribution<float> yDist(-20.0f, 20.0f);
+
         std::uniform_real_distribution<float> rotDist(0.0f, 360.0f);
 
         for (uint32_t i = 0; i < EngineConfig::MAX_GALAXIES; i++) {
             auto galaxy = std::make_unique<VulkanParticleSystem>(
                 device, physicalDevice, *globalPool, *computeDescriptorLayout,
-                commandPool, graphicsQueue, 500000
+                commandPool, graphicsQueue, EngineConfig::MAX_PARTICLE_COUNT
             );
 
             // Random Placement
             glm::mat4 transform = glm::translate(glm::mat4(1.f), glm::vec3(posDist(rnd), posDist(rnd), posDist(rnd)));
-            transform = glm::rotate(transform, glm::radians(rotDist(rnd)), glm::vec3(0, 1, 0));
+            transform = glm::rotate(transform, glm::radians(rotDist(rnd)), glm::vec3(1, 0, 0));
+            transform = glm::rotate(transform, glm::radians(rotDist(rnd)), glm::vec3(0, 1, 0)); // Yaw
 
             galaxy->setModelMatrix(transform);
             galaxies.push_back(std::move(galaxy));
@@ -1800,7 +1804,7 @@ private:
 
         UniformBufferObject ubo{};
         ubo.view = camera.getViewMatrix();
-        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 100.0f);
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 1000.0f);
         ubo.proj[1][1] *= -1; // Vulkan Y-flip
 
         uniformBufferResources[currentImage]->copyTo(&ubo, sizeof(ubo));

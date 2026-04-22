@@ -39,33 +39,7 @@ VulkanParticleSystem::VulkanParticleSystem(
         p.velocity = glm::vec4(r, theta, orbitSpeed, spreadX);
     }
 
-    //for (auto& particle : initialParticles) {
-    //    // 1. Core Orbital Parameters
-    //    // We use sqrt to make the center denser
-    //    float r = std::sqrt(rndDist(rndEngine)) * 10.f;
-    //    float startAngle = rndDist(rndEngine) * 2.0f * 3.14159265f;
 
-    //    // Keplerian-ish speed: inner orbits are much faster
-    //    float orbitSpeed = 0.3f / (r + 0.1f);
-
-    //    // 2. Stochastic Clutter (The "Spread")
-    //    // These values are static—they don't change, they just offset the math
-    //    float spreadX = (rndDist(rndEngine) - 0.5f) * 0.12f;
-    //    float spreadY = (rndDist(rndEngine) - 0.5f) * 0.12f;
-    //    float spreadZ = (rndDist(rndEngine) - 0.5f) * 0.4f;
-
-    //    // 3. Store the "DNA" in the vectors
-    //    // Position: We don't calculate the actual x/y here, the shader will do it.
-    //    // We just store spreadZ in the 'z' component.
-    //    particle.position = glm::vec4(0.0f, 0.0f, spreadZ, 1.0f);
-
-    //    // Velocity: x=radius, y=angle, z=speed, w=spreadX
-    //    particle.velocity = glm::vec4(r, startAngle, orbitSpeed, spreadX);
-
-    //    // Color: r, g, b are actual colors, alpha stores spreadY
-    //    glm::vec3 baseColor = glm::mix(glm::vec3(1.0f, 0.8f, 0.5f), glm::vec3(0.5f, 0.7f, 1.0f), r);
-    //    particle.color = glm::vec4(baseColor, spreadY);
-    //}
 
     // --- 2. STAGING (CPU to GPU Bridge) ---
     // Matches your (device, physDevice, size, usage, properties)
