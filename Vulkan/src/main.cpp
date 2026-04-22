@@ -13,7 +13,7 @@
 
 #include <chrono>
 //class include
-#include "Camera.cpp"
+#include "Camera.h"
 #include "engine/vulkanBuffer.h"
 #include "engine/Mesh.h"
 #include "engine/ModelLoader.h"
@@ -322,10 +322,33 @@ private:
 
         window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
         glfwSetWindowUserPointer(window, this);
-        glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
 
+        // Mouse Movement Callback
+        glfwSetCursorPosCallback(window, [](GLFWwindow* window, double xpos, double ypos) {
+            auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+
+            if (app->firstMouse) {
+                app->lastX = xpos;
+                app->lastY = ypos;
+                app->firstMouse = false;
+            }
+
+            float xoffset = xpos - app->lastX;
+            float yoffset = app->lastY - ypos; // Reversed since y-coordinates go from bottom to top
+            app->lastX = xpos;
+            app->lastY = ypos;
+
+            app->camera.processMouse(xoffset, yoffset);
+            });
+
+        // Scroll Wheel Callback
+        glfwSetScrollCallback(window, [](GLFWwindow* window, double xoffset, double yoffset) {
+            auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+            app->camera.processScroll((float)yoffset);
+            });
+
+        // Capture the mouse so it doesn't leave the screen
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        glfwSetCursorPosCallback(window, mouse_callback);
     }
 
     static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
@@ -1351,13 +1374,28 @@ private:
         // we keep it bound. If it uses a DIFFERENT layout, you'd bind that layout's sets here.
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, particlePipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
+        glm::vec3 cameraPos = camera.getPosition();
+        glm::vec3 cameraForward = camera.getFront();
+
         for (auto& galaxy : galaxies) {
-            // galaxy->draw handles:
-            // 1. Pushing the Galaxy's unique Model Matrix via Push Constants
-            // 2. Binding the correct Storage Buffer as a Vertex Buffer
-            // 3. Calling vkCmdDraw
-            galaxy->draw(commandBuffer, particlePipelineLayout, currentFrame);
+            // 1. Get distance
+            glm::vec3 galaxyPos = glm::vec3(galaxy->getModelMatrix()[3]);
+            float distance = glm::distance(cameraPos, galaxyPos);
+
+            // 2. Determine LOD Count
+            uint32_t activeCount = EngineConfig::MAX_PARTICLE_COUNT;
+            if (distance > 500.0f) {
+                activeCount = 10000;
+            }
+            else if (distance > 100.0f) {
+                activeCount = 100000;
+            }
+
+            // 3. Draw with the new parameter
+            galaxy->draw(commandBuffer, particlePipelineLayout, currentFrame, activeCount);
         }
+
+   
 
         // 3. Close the Render Pass
         vkCmdEndRenderPass(commandBuffer);
@@ -1381,10 +1419,25 @@ private:
         float dt = deltaTime;
 
         // 2. Let each galaxy handle its own math, descriptors, and dispatching
+        glm::vec3 cameraPos = camera.getPosition();
+        glm::vec3 cameraForward = camera.getFront();
+
         for (auto& galaxy : galaxies) {
-            // galaxy->update() internally pushes the delta time, binds its specific ping-pong
-            // descriptors, and calls vkCmdDispatch. 
-            galaxy->update(commandBuffer, computePipelineLayout, dt, currentFrame);
+            // 1. Get distance
+            glm::vec3 galaxyPos = glm::vec3(galaxy->getModelMatrix()[3]);
+            float distance = glm::distance(cameraPos, galaxyPos);
+
+            // 2. Determine LOD Count
+            uint32_t activeCount = EngineConfig::MAX_PARTICLE_COUNT;
+            if (distance > 500.0f) {
+                activeCount = 10000;   // Far: Core only
+            }
+            else if (distance > 100.0f) {
+                activeCount = 100000;  // Mid: Core + inner arms
+            }
+
+            // 3. Update with the new parameter
+            galaxy->update(commandBuffer, computePipelineLayout, dt, currentFrame, activeCount);
         }
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
@@ -1664,35 +1717,6 @@ private:
         return VK_FALSE;
     }
 
-    void createGalaxies() {
-        // 1. The Milky Way (Center)
-        auto milkyWay = std::make_unique<VulkanParticleSystem>(
-            device,
-            physicalDevice,
-            *globalPool,
-            *computeDescriptorLayout,
-            commandPool,     // The handle for your command pool
-            graphicsQueue,   // The handle for your graphics queue
-            EngineConfig::MAX_PARTICLE_COUNT);
-
-        // 2. Andromeda (Off to the right and slightly rotated)
-        auto andromeda = std::make_unique<VulkanParticleSystem>(
-            device,
-            physicalDevice,
-            *globalPool,
-            *computeDescriptorLayout,
-            commandPool,     // The handle for your command pool
-            graphicsQueue,   // The handle for your graphics queue
-            EngineConfig::MAX_PARTICLE_COUNT);
-
-        glm::mat4 andromedaTransform = glm::translate(glm::mat4(1.f), glm::vec3(10.0f, 2.0f, 0.0f));
-        andromedaTransform = glm::rotate(andromedaTransform, glm::radians(45.0f), glm::vec3(0, 1, 0));
-        andromeda->setModelMatrix(andromedaTransform);
-
-        galaxies.push_back(std::move(milkyWay));
-        galaxies.push_back(std::move(andromeda));
-    }
-
     void createUniverse() {
         
         std::default_random_engine rnd(static_cast<unsigned>(time(nullptr))); 
@@ -1804,7 +1828,7 @@ private:
 
         UniformBufferObject ubo{};
         ubo.view = camera.getViewMatrix();
-        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 1000.0f);
+        ubo.proj = glm::perspective(glm::radians(camera.getFov()), swapChainExtent.width / (float)swapChainExtent.height, 0.1f, 1000.0f);
         ubo.proj[1][1] *= -1; // Vulkan Y-flip
 
         uniformBufferResources[currentImage]->copyTo(&ubo, sizeof(ubo));

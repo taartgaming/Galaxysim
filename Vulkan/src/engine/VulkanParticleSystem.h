@@ -24,13 +24,15 @@ public:
 
     void setModelMatrix(const glm::mat4& model) { config.modelMatrix = model; }
 
+    const glm::mat4& getModelMatrix() const { return config.modelMatrix; }
+
     void updateLogic(glm::vec3 cameraPos);
 
     // The logic update (Compute)
-    void update(VkCommandBuffer cmd, VkPipelineLayout computeLayout, float dt, uint32_t currentFrame);
+    void update(VkCommandBuffer cmd, VkPipelineLayout computeLayout, float dt, uint32_t currentFrame, uint32_t activeCount);
 
     // The visual render (Graphics)
-    void draw(VkCommandBuffer cmd, VkPipelineLayout graphicsLayout, uint32_t currentFrame);
+    void draw(VkCommandBuffer cmd, VkPipelineLayout graphicsLayout, uint32_t currentFrame, uint32_t activeCount);
 
 private:
     struct Configuration {

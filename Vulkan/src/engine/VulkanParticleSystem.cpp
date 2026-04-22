@@ -104,7 +104,7 @@ void VulkanParticleSystem::updateLogic(glm::vec3 cameraPos) {
     }
 }
 
-void VulkanParticleSystem::update(VkCommandBuffer cmd, VkPipelineLayout computeLayout, float dt, uint32_t currentFrame) {
+void VulkanParticleSystem::update(VkCommandBuffer cmd, VkPipelineLayout computeLayout, float dt, uint32_t currentFrame, uint32_t activeCount) {
     // Push the DeltaTime (Push Constant)
     vkCmdPushConstants(cmd, computeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float), &dt);
 
@@ -119,10 +119,10 @@ void VulkanParticleSystem::update(VkCommandBuffer cmd, VkPipelineLayout computeL
     );
 
     // Dispatch the compute shader
-    vkCmdDispatch(cmd, (particleCount + 255) / 256, 1, 1);
+    vkCmdDispatch(cmd, (activeCount + 255) / 256, 1, 1);
 }
 
-void VulkanParticleSystem::draw(VkCommandBuffer cmd, VkPipelineLayout graphicsLayout, uint32_t currentFrame) {
+void VulkanParticleSystem::draw(VkCommandBuffer cmd, VkPipelineLayout graphicsLayout, uint32_t currentFrame, uint32_t activeCount) {
     // 1. Push Model Matrix (Push Constant)
     vkCmdPushConstants(
         cmd,
@@ -139,5 +139,5 @@ void VulkanParticleSystem::draw(VkCommandBuffer cmd, VkPipelineLayout graphicsLa
     vkCmdBindVertexBuffers(cmd, 0, 1, buffers, offsets);
 
     // 3. Draw
-    vkCmdDraw(cmd, particleCount, 1, 0, 0);
+    vkCmdDraw(cmd, activeCount, 1, 0, 0);
 }

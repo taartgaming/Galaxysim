@@ -22,10 +22,7 @@ void main() {
 
     // Distance-based point size: Stars get bigger as you get closer
     // 5.0 is base size, divided by the Z-depth in view space
-    gl_PointSize = 5.0 * (1.0 / -viewPos.z); 
-    
-    // Clamp it so they don't disappear when far or become blocks when close
-    gl_PointSize = clamp(gl_PointSize, 1.0, 10.0);
+    gl_PointSize = clamp(5.0 * (1.0 / -viewPos.z), 1.0, 4.0);
 
     fragColor = inColor;
 }

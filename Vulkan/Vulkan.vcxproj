@@ -173,6 +173,7 @@
     </Text>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\Camera.h" />
     <ClInclude Include="src\engine\InstanceGroup.h" />
     <ClInclude Include="src\engine\ModelLoader.h" />
     <ClInclude Include="src\engine\Mesh.h" />
