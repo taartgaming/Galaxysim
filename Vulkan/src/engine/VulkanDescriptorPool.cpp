@@ -58,7 +58,7 @@ bool VulkanDescriptorPool::allocateDescriptor(
 
     // Might fail if pool is empty
     if (vkAllocateDescriptorSets(device, &allocInfo, &descriptor) != VK_SUCCESS) {
-        return false;
+        throw std::runtime_error("failed to allocate descriptor sets!");
     }
     return true;
 }

@@ -4,7 +4,7 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/matrix_transform.hpp>EngineConfig::EngineConfig::MAX_FRAMES_IN_FLIGHT
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
@@ -20,9 +20,13 @@
 #include "engine/InstanceGroup.h"
 #include "engine/VulkanTexture.h"
 #include "engine/VulkanPipeline.h"
+#include "engine/VulkanComputePipeline.h"
 #include "engine/VulkanDescriptorWriter.h"
+#include "engine/VulkanParticleSystem.h"
 
+#include "VulkanConfig.h"
 #include "Vertex.hpp"
+#include "Particle.hpp"
 #include "InstanceData.hpp"
 #include "engine/VulkanUtils.hpp"
 
@@ -49,9 +53,6 @@
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
-const uint32_t PARTICLE_COUNT = 8192 * 70;
-
-const int MAX_FRAMES_IN_FLIGHT = 2;
 uint32_t currentFrame = 0;
 
 const std::string MODEL_PATH = "models/viking_room.obj";
@@ -106,45 +107,7 @@ struct SwapChainSupportDetails {
 
 
 
-struct Particle
-{
-    glm::vec4 position; // x, y, z, spreadZ
-    glm::vec4 velocity; // radius, angle, speed, spreadX
-    glm::vec4 color;    // r, g, b, spreadY
 
-    static VkVertexInputBindingDescription getBindingDescription() {
-        VkVertexInputBindingDescription bindingDescription{};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Particle);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        return bindingDescription;
-    }
-
-
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
-
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Particle, position);
-
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Particle, color);
-
-        return attributeDescriptions;
-    }
-
-    static std::vector<VkVertexInputAttributeDescription> getAttributeDescriptionsCombined() {
-        auto attr = getAttributeDescriptions(); // This gets your existing array
-        return std::vector<VkVertexInputAttributeDescription>(attr.begin(), attr.end());
-    }
-
-
-};
 
 struct ComputeUniformBufferObject {
     float deltaTime = 1.0f;
@@ -253,7 +216,7 @@ private:
 
     VkDescriptorSetLayout computeDescriptorSetLayout;
     VkPipelineLayout computePipelineLayout;
-    VkPipeline computePipeline;
+    std::unique_ptr<VulkanComputePipeline> computePipelineObj;
 
     std::unique_ptr<VulkanPipeline> particlePipeline;
     VkPipelineLayout particlePipelineLayout;
@@ -273,8 +236,10 @@ private:
     VkBuffer instanceBuffer; 
     VkDeviceMemory instanceBufferMemory;
 
-    std::vector<VkBuffer> shaderStorageBuffers;
-    std::vector<VkDeviceMemory> shaderStorageBuffersMemory; 
+    // Replace raw buffers with these
+    std::vector<std::unique_ptr<VulkanBuffer>> shaderStorageBuffers;
+
+
 
     std::unique_ptr<Mesh> vikingRoomMesh;
     std::unique_ptr<InstanceGroup> vikingInstances;
@@ -289,7 +254,7 @@ private:
 
 
     std::vector<VkDescriptorSet> descriptorSets;
-    std::vector<VkDescriptorSet> computeDescriptorSets;
+    //std::vector<VkDescriptorSet> computeDescriptorSets;
 
     std::vector<VkCommandBuffer> commandBuffers;
     std::vector<VkCommandBuffer> computeCommandBuffers;
@@ -300,6 +265,8 @@ private:
 
     std::vector<VkFence> computeInFlightFences;
     std::vector<VkSemaphore> computeFinishedSemaphores;
+
+    std::vector<std::unique_ptr<VulkanParticleSystem>> galaxies;
 
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
 
@@ -411,16 +378,19 @@ private:
             device, physicalDevice, commandPool, graphicsQueue,
             vikingData.vertices, vikingData.indices
         );
-
-        createShaderStorageBuffers();
+        
+      
         createUniformBuffers();
         createComputeUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
-        createComputeDescriptorSets();
+        //createComputeDescriptorSets();
+        //createGalaxies();
+        createUniverse();
         createCommandBuffers();
         createComputeCommandBuffers();;
         createSyncObjects();
+        
     }
 
     void mainLoop() {
@@ -464,20 +434,23 @@ private:
         vikingInstances.reset();
         vikingTexture.reset();
         vikingPipeline.reset();
-        particlePipeline.reset(); // If it's a unique_ptr now
+        particlePipeline.reset();
+        galaxies.clear();
         globalPool.reset();
         meshDescriptorLayout.reset();
         computeDescriptorLayout.reset();
         uniformBufferResources.clear();
 
+        shaderStorageBuffers.clear(); // <-- THIS IS YOUR VKBUFFER LEAK!
+        computePipelineObj.reset();
+
         // 2. Clear infrastructure
         cleanupSwapChain();
 
         // 3. Clear remaining manual buffers (like particles)
-// 3. Manual Compute/Particle resources (ONLY ONCE)
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkDestroyBuffer(device, shaderStorageBuffers[i], nullptr);
-            vkFreeMemory(device, shaderStorageBuffersMemory[i], nullptr);
+
+        for (size_t i = 0; i < EngineConfig::MAX_FRAMES_IN_FLIGHT; i++) {
+
 
             vkDestroyBuffer(device, computeUniformBuffers[i], nullptr);
             vkFreeMemory(device, computeUniformBuffersMemory[i], nullptr);
@@ -489,9 +462,10 @@ private:
         vkDestroyPipelineCache(device, pipelineCache, nullptr);
 
    
-        vkDestroyPipeline(device, computePipeline, nullptr);
+
         vkDestroyPipelineLayout(device, computePipelineLayout, nullptr);
         vkDestroyDescriptorSetLayout(device, computeDescriptorSetLayout, nullptr);
+        vkDestroyPipelineLayout(device, particlePipelineLayout, nullptr);
 		
 
         vkDestroyBuffer(device, instanceBuffer, nullptr);
@@ -507,7 +481,7 @@ private:
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        for (size_t i = 0; i < EngineConfig::MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
             vkDestroyFence(device, inFlightFences[i], nullptr);
         }
@@ -877,48 +851,31 @@ private:
     }
 
     void createComputePipeline() {
-        // 1. Shaders
-        auto computeShaderCode = readFile("shaders/compute.spv");
-        VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
+        // 1. Create the Layout (The "Map" for the shader)
+        VkPushConstantRange pushConstantRange{};
+        pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        pushConstantRange.offset = 0;
+        pushConstantRange.size = sizeof(glm::mat4); // Your deltaTime push constant
 
-        VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
-        computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-        computeShaderStageInfo.module = computeShaderModule;
-        computeShaderStageInfo.pName = "main";
-
-        // 2. Push Constants
-        VkPushConstantRange compPush{};
-        compPush.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-        compPush.offset = 0;
-        compPush.size = sizeof(float);
-
-        // 3. CREATE COMPUTE PIPELINE LAYOUT (The missing piece)
-        VkDescriptorSetLayout layouts[] = { computeDescriptorLayout->getDescriptorSetLayout() };
+        VkDescriptorSetLayout setLayout = computeDescriptorLayout->getDescriptorSetLayout();
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
-        pipelineLayoutInfo.pSetLayouts = layouts;
+        pipelineLayoutInfo.pSetLayouts = &setLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 1;
-        pipelineLayoutInfo.pPushConstantRanges = &compPush;
+        pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
-        // Use your class member computePipelineLayout
         if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create compute pipeline layout!");
         }
 
-        // 4. PIPELINE
-        VkComputePipelineCreateInfo pipelineInfo{};
-        pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        pipelineInfo.layout = computePipelineLayout; // Correct handle usage
-        pipelineInfo.stage = computeShaderStageInfo;
-
-        if (vkCreateComputePipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create compute pipeline!");
-        }
-
-        vkDestroyShaderModule(device, computeShaderModule, nullptr);
+        // 2. Instantiate the managed Compute Pipeline object
+        computePipelineObj = std::make_unique<VulkanComputePipeline>(
+            device,
+            "shaders/compute.spv",
+            computePipelineLayout
+        );
     }
 
     void createPipelineLayouts() {
@@ -928,6 +885,10 @@ private:
         pushConstantRange.size = sizeof(glm::mat4);
 
         VkDescriptorSetLayout setLayout = meshDescriptorLayout->getDescriptorSetLayout();
+
+        if (setLayout == VK_NULL_HANDLE) {
+            throw std::runtime_error("Mesh descriptor set layout is null!");
+        }
 
         VkPipelineLayoutCreateInfo graphicsLayoutInfo{};
         graphicsLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -939,25 +900,17 @@ private:
         if (vkCreatePipelineLayout(device, &graphicsLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
             throw std::runtime_error("failed to create graphics pipeline layout!");
 
+        // Create particle pipeline layout using the same descriptor set layout
+        VkPipelineLayoutCreateInfo particleLayoutInfo{};
+        particleLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        particleLayoutInfo.setLayoutCount = 1;
+        particleLayoutInfo.pSetLayouts = &setLayout;
+        particleLayoutInfo.pushConstantRangeCount = 1; // No push constants for particles
+        particleLayoutInfo.pPushConstantRanges = &pushConstantRange;
+
         // Particle reuses the same descriptor set layout and push constant
-        if (vkCreatePipelineLayout(device, &graphicsLayoutInfo, nullptr, &particlePipelineLayout) != VK_SUCCESS)
+        if (vkCreatePipelineLayout(device, &particleLayoutInfo, nullptr, &particlePipelineLayout) != VK_SUCCESS)
             throw std::runtime_error("failed to create particle pipeline layout!");
-
-        // --- Compute pipeline layout ---
-        VkPushConstantRange compPush{};
-        compPush.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-        compPush.offset = 0;
-        compPush.size = sizeof(float);
-
-        VkPipelineLayoutCreateInfo computeLayoutInfo{};
-        computeLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        computeLayoutInfo.setLayoutCount = 1;
-        computeLayoutInfo.pSetLayouts = &computeDescriptorSetLayout;
-        computeLayoutInfo.pushConstantRangeCount = 1;
-        computeLayoutInfo.pPushConstantRanges = &compPush;
-
-        if (vkCreatePipelineLayout(device, &computeLayoutInfo, nullptr, &computePipelineLayout) != VK_SUCCESS)
-            throw std::runtime_error("failed to create compute pipeline layout!");
     }
 
 
@@ -1030,6 +983,10 @@ private:
             "shaders/frag.spv",
             configInfo
         );
+
+        if (vikingPipeline == nullptr) {
+            throw std::runtime_error("Failed to create graphics pipeline!");
+        }
     }
 
     void createFramebuffers() {
@@ -1203,9 +1160,9 @@ private:
 
     void createUniformBuffers() {
         VkDeviceSize bufferSize = sizeof(UniformBufferObject);
-        uniformBufferResources.resize(MAX_FRAMES_IN_FLIGHT);
+        uniformBufferResources.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        for (size_t i = 0; i < EngineConfig::MAX_FRAMES_IN_FLIGHT; i++) {
             uniformBufferResources[i] = std::make_unique<VulkanBuffer>(
                 device,
                 physicalDevice,
@@ -1221,11 +1178,11 @@ private:
 
     void createComputeUniformBuffers() {
         VkDeviceSize bufferSize = sizeof(ComputeUniformBufferObject);
-        computeUniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-        computeUniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
-        computeUniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+        computeUniformBuffers.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
+        computeUniformBuffersMemory.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
+        computeUniformBuffersMapped.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        for (size_t i = 0; i < EngineConfig::MAX_FRAMES_IN_FLIGHT; i++) {
             createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 computeUniformBuffers[i], computeUniformBuffersMemory[i]);
@@ -1243,75 +1200,14 @@ private:
         memcpy(computeUniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
     }
 
-    void createShaderStorageBuffers() {
-
-        // Initialize particles
-        std::default_random_engine rndEngine((unsigned)time(nullptr));
-        std::uniform_real_distribution<float> rndDist(0.0f, 1.0f);
-
-        // Initial particle positions on a circle
-        std::vector<Particle> particles(PARTICLE_COUNT);
-        std::vector<Particle> par2cles(PARTICLE_COUNT);
-
-        for (auto& particle : particles) {
-            // 1. Core Orbital Parameters
-            // We use sqrt to make the center denser
-            float r = std::sqrt(rndDist(rndEngine)) * 10.f;
-            float startAngle = rndDist(rndEngine) * 2.0f * 3.14159265f;
-
-            // Keplerian-ish speed: inner orbits are much faster
-            float orbitSpeed = 0.3f / (r + 0.1f);
-
-            // 2. Stochastic Clutter (The "Spread")
-            // These values are static—they don't change, they just offset the math
-            float spreadX = (rndDist(rndEngine) - 0.5f) * 0.12f;
-            float spreadY = (rndDist(rndEngine) - 0.5f) * 0.12f;
-            float spreadZ = (rndDist(rndEngine) - 0.5f) * 0.4f;
-
-            // 3. Store the "DNA" in the vectors
-            // Position: We don't calculate the actual x/y here, the shader will do it.
-            // We just store spreadZ in the 'z' component.
-            particle.position = glm::vec4(0.0f, 0.0f, spreadZ, 1.0f);
-
-            // Velocity: x=radius, y=angle, z=speed, w=spreadX
-            particle.velocity = glm::vec4(r, startAngle, orbitSpeed, spreadX);
-
-            // Color: r, g, b are actual colors, alpha stores spreadY
-            glm::vec3 baseColor = glm::mix(glm::vec3(1.0f, 0.8f, 0.5f), glm::vec3(0.5f, 0.7f, 1.0f), r);
-            particle.color = glm::vec4(baseColor, spreadY);
-        }
-
-        
-        VkDeviceSize bufferSize = sizeof(Particle) * PARTICLE_COUNT;
-
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, particles.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-        shaderStorageBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-        shaderStorageBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
-
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            createBuffer(bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, shaderStorageBuffers[i], shaderStorageBuffersMemory[i]);
-            // Copy data from the staging buffer (host) to the shader storage buffer (GPU)
-            VulkanUtils::copyBuffer(device, commandPool, graphicsQueue, stagingBuffer, shaderStorageBuffers[i], bufferSize);
-        }
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-
-    }
+  
 
     void createDescriptorPool() {
         globalPool = VulkanDescriptorPool::Builder(device)
-            .setMaxSets(MAX_FRAMES_IN_FLIGHT * 2) // Enough for mesh and particles
-            .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT)
-            .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT)
-            .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT * 2)
+            .setMaxSets(EngineConfig::MAX_FRAMES_IN_FLIGHT * EngineConfig::MAX_GALAXIES * 2) // Enough for mesh and particles
+            .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, EngineConfig::MAX_FRAMES_IN_FLIGHT * EngineConfig::MAX_GALAXIES * 2)
+            .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, EngineConfig::MAX_FRAMES_IN_FLIGHT * EngineConfig::MAX_GALAXIES * 2)
+            .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, EngineConfig::MAX_FRAMES_IN_FLIGHT * EngineConfig::MAX_GALAXIES * 2)
             .build();
     }
 
@@ -1321,41 +1217,55 @@ private:
             .addBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT) // Prev frame
             .addBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT) // Curr frame
             .build();
-    }
 
-    void createComputeDescriptorSets() {
-        computeDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            // Prepare the buffer infos
-            auto prevBufferInfo = VkDescriptorBufferInfo{ shaderStorageBuffers[(i + 1) % 2], 0, sizeof(Particle) * PARTICLE_COUNT };
-            auto currBufferInfo = VkDescriptorBufferInfo{ shaderStorageBuffers[i], 0, sizeof(Particle) * PARTICLE_COUNT };
-
-            VulkanDescriptorWriter(*computeDescriptorLayout, *globalPool)
-                .writeBuffer(0, &prevBufferInfo)
-                .writeBuffer(1, &currBufferInfo)
-                .build(computeDescriptorSets[i]);
+        if (computeDescriptorLayout == nullptr) {
+            throw std::runtime_error("Failed to create compute descriptor set layout!");
         }
     }
+
+    //void createComputeDescriptorSets() {
+    //    computeDescriptorSets.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
+    //    for (int i = 0; i < EngineConfig::MAX_FRAMES_IN_FLIGHT; i++) {
+    //        // Ping-ponging: Frame i reads from i, writes to (i+1)%2
+    //        auto prevFrameInfo = shaderStorageBuffers[(i + 1) % 2]->descriptorInfo();
+    //        auto currFrameInfo = shaderStorageBuffers[i]->descriptorInfo();
+
+    //        // Create a new writer for each frame
+    //        VulkanDescriptorWriter writer(*computeDescriptorLayout, *globalPool);
+    //        writer.writeBuffer(0, &prevFrameInfo) // ParticleSSBOIn
+    //            .writeBuffer(1, &currFrameInfo); // ParticleSSBOOut
+
+    //        // Check if the writer was successful
+    //        if (!writer.build(computeDescriptorSets[i])) {
+    //            throw std::runtime_error("Failed to build compute descriptor set!");
+    //        }
+    //    }
+    //}
 
 
   
 
     void createDescriptorSets() {
-        descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-        for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        descriptorSets.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
+        for (int i = 0; i < EngineConfig::MAX_FRAMES_IN_FLIGHT; i++) {
             auto bufferInfo = uniformBufferResources[i]->descriptorInfo();
             auto imageInfo = vikingTexture->descriptorInfo();
 
-            VulkanDescriptorWriter(*meshDescriptorLayout, *globalPool)
-                .writeBuffer(0, &bufferInfo)
-                .writeImage(1, &imageInfo)
-                .build(descriptorSets[i]);
+            // Create a new writer for each frame
+            VulkanDescriptorWriter writer(*meshDescriptorLayout, *globalPool);
+            writer.writeBuffer(0, &bufferInfo)
+                .writeImage(1, &imageInfo);
+
+            // Check if the writer was successful
+            if (!writer.build(descriptorSets[i])) {
+                throw std::runtime_error("Failed to build graphics descriptor set!");
+            }
         }
     }
 
         
     void createCommandBuffers() {
-        commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+        commandBuffers.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
 
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1369,7 +1279,7 @@ private:
     }
 
     void createComputeCommandBuffers() {
-        computeCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+        computeCommandBuffers.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
 
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1386,8 +1296,6 @@ private:
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        beginInfo.flags = 0; // Optional
-        beginInfo.pInheritanceInfo = nullptr; // Optional
 
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
             throw std::runtime_error("failed to begin recording command buffer!");
@@ -1397,21 +1305,19 @@ private:
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderPassInfo.renderPass = renderPass;
         renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
-
         renderPassInfo.renderArea.offset = { 0, 0 };
         renderPassInfo.renderArea.extent = swapChainExtent;
 
         std::array<VkClearValue, 2> clearValues{};
         clearValues[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
         clearValues[1].depthStencil = { 1.0f, 0 };
-
         renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
         renderPassInfo.pClearValues = clearValues.data();
 
+        // 1. Enter the Render Pass
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        
-
+        // 2. Setup Viewport and Scissor (Must be inside Render Pass if dynamic)
         VkViewport viewport{};
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -1426,35 +1332,34 @@ private:
         scissor.extent = swapChainExtent;
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-        glm::mat4 model = glm::mat4(1.0f);   // or whatever transform you want for this object
-        vkCmdPushConstants(commandBuffer, pipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT,
-            0, sizeof(model), &model);
-
-        glm::mat4 particleModel = glm::mat4(1.0f);   // whatever transform you want
-        vkCmdPushConstants(commandBuffer, particlePipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT,
-            0, sizeof(particleModel), &particleModel);
-
-
-
+        // --- DRAW VIKING ROOM (Standard Mesh) ---
         vikingPipeline->bind(commandBuffer);
 
+        // Global UBOs for the Viking Room
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
-        vikingRoomMesh->draw(
-            commandBuffer,
-            vikingInstances->getBuffer(),
-            vikingInstances->getCount()
-        );;
+        glm::mat4 vikingModel = glm::mat4(1.0f);
+        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(vikingModel), &vikingModel);
 
+        //vikingRoomMesh->draw(commandBuffer, vikingInstances->getBuffer(), vikingInstances->getCount());
+
+        // --- DRAW PARTICLE GALAXIES ---
+        // Switch to the Particle Pipeline
         particlePipeline->bind(commandBuffer);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, particlePipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
-        VkBuffer particleBuffers[] = { shaderStorageBuffers[currentFrame] };
-        VkDeviceSize particleOffsets[] = { 0 };
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, particleBuffers, particleOffsets);
-        vkCmdDraw(commandBuffer, PARTICLE_COUNT, 1, 0, 0);
 
+        // If your particle vertex shader uses the SAME UBO as the Viking room (for View/Proj), 
+        // we keep it bound. If it uses a DIFFERENT layout, you'd bind that layout's sets here.
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, particlePipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+
+        for (auto& galaxy : galaxies) {
+            // galaxy->draw handles:
+            // 1. Pushing the Galaxy's unique Model Matrix via Push Constants
+            // 2. Binding the correct Storage Buffer as a Vertex Buffer
+            // 3. Calling vkCmdDraw
+            galaxy->draw(commandBuffer, particlePipelineLayout, currentFrame);
+        }
+
+        // 3. Close the Render Pass
         vkCmdEndRenderPass(commandBuffer);
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
@@ -1470,21 +1375,21 @@ private:
             throw std::runtime_error("failed to begin recording compute command buffer!");
         }
 
+        // 1. Bind the pipeline ("Brain") once
+        computePipelineObj->bind(commandBuffer);
+
         float dt = deltaTime;
-        vkCmdPushConstants(commandBuffer, computePipelineLayout,
-            VK_SHADER_STAGE_COMPUTE_BIT,
-            0, sizeof(dt), &dt);
 
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout, 0, 1, &computeDescriptorSets[currentFrame], 0, nullptr);
-
-        vkCmdDispatch(commandBuffer, PARTICLE_COUNT / 256, 1, 1);
+        // 2. Let each galaxy handle its own math, descriptors, and dispatching
+        for (auto& galaxy : galaxies) {
+            // galaxy->update() internally pushes the delta time, binds its specific ping-pong
+            // descriptors, and calls vkCmdDispatch. 
+            galaxy->update(commandBuffer, computePipelineLayout, dt, currentFrame);
+        }
 
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
             throw std::runtime_error("failed to record compute command buffer!");
         }
-
     }
 
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
@@ -1520,12 +1425,12 @@ private:
     }
 
     void createSyncObjects() {
-        imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);       // per frame
+        imageAvailableSemaphores.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);       // per frame
         renderFinishedSemaphores.resize(swapChainImages.size());     // per swapchain image
-        inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+        inFlightFences.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
 
-        computeInFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
-        computeFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        computeInFlightFences.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
+        computeFinishedSemaphores.resize(EngineConfig::MAX_FRAMES_IN_FLIGHT);
 
         VkSemaphoreCreateInfo semaphoreInfo{};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1534,7 +1439,7 @@ private:
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        for (size_t i = 0; i < EngineConfig::MAX_FRAMES_IN_FLIGHT; i++) {
             if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
                 vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
                 throw std::runtime_error("failed to create per-frame sync objects!");
@@ -1545,7 +1450,7 @@ private:
                 throw std::runtime_error("failed to create per-image semaphores!");
         }
 
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        for (size_t i = 0; i < EngineConfig::MAX_FRAMES_IN_FLIGHT; i++) {
             if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &computeFinishedSemaphores[i]) != VK_SUCCESS ||
                 vkCreateFence(device, &fenceInfo, nullptr, &computeInFlightFences[i]) != VK_SUCCESS) {
                 throw std::runtime_error("failed to create compute synchronization objects for a frame!");
@@ -1758,6 +1663,56 @@ private:
 
         return VK_FALSE;
     }
+
+    void createGalaxies() {
+        // 1. The Milky Way (Center)
+        auto milkyWay = std::make_unique<VulkanParticleSystem>(
+            device,
+            physicalDevice,
+            *globalPool,
+            *computeDescriptorLayout,
+            commandPool,     // The handle for your command pool
+            graphicsQueue,   // The handle for your graphics queue
+            EngineConfig::MAX_PARTICLE_COUNT);
+
+        // 2. Andromeda (Off to the right and slightly rotated)
+        auto andromeda = std::make_unique<VulkanParticleSystem>(
+            device,
+            physicalDevice,
+            *globalPool,
+            *computeDescriptorLayout,
+            commandPool,     // The handle for your command pool
+            graphicsQueue,   // The handle for your graphics queue
+            EngineConfig::MAX_PARTICLE_COUNT);
+
+        glm::mat4 andromedaTransform = glm::translate(glm::mat4(1.f), glm::vec3(10.0f, 2.0f, 0.0f));
+        andromedaTransform = glm::rotate(andromedaTransform, glm::radians(45.0f), glm::vec3(0, 1, 0));
+        andromeda->setModelMatrix(andromedaTransform);
+
+        galaxies.push_back(std::move(milkyWay));
+        galaxies.push_back(std::move(andromeda));
+    }
+
+    void createUniverse() {
+        
+        std::default_random_engine rnd(42); // Seed for consistency
+        std::uniform_real_distribution<float> posDist(-20.0f, 20.0f);
+        std::uniform_real_distribution<float> rotDist(0.0f, 360.0f);
+
+        for (uint32_t i = 0; i < EngineConfig::MAX_GALAXIES; i++) {
+            auto galaxy = std::make_unique<VulkanParticleSystem>(
+                device, physicalDevice, *globalPool, *computeDescriptorLayout,
+                commandPool, graphicsQueue, 500000
+            );
+
+            // Random Placement
+            glm::mat4 transform = glm::translate(glm::mat4(1.f), glm::vec3(posDist(rnd), posDist(rnd), posDist(rnd)));
+            transform = glm::rotate(transform, glm::radians(rotDist(rnd)), glm::vec3(0, 1, 0));
+
+            galaxy->setModelMatrix(transform);
+            galaxies.push_back(std::move(galaxy));
+        }
+    }
     
     void drawFrame() {
         /* 1.  Wait for the *previous* compute & graphics work to finish */
@@ -1811,6 +1766,7 @@ private:
 
         vkQueueSubmit(graphicsQueue, 1, &graphicsSubmitInfo, inFlightFences[currentFrame]);
 
+
         /* 6.  Presentation --------------------------------------------------- */
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -1829,7 +1785,7 @@ private:
             throw std::runtime_error("failed to present swap chain image!");
         }
 
-        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+        currentFrame = (currentFrame + 1) % EngineConfig::MAX_FRAMES_IN_FLIGHT;
     }
 
 

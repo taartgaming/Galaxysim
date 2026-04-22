@@ -142,6 +142,8 @@
     <ClCompile Include="src\engine\VulkanDescriptorPool.cpp" />
     <ClCompile Include="src\engine\VulkanDescriptorsetLayout.cpp" />
     <ClCompile Include="src\engine\VulkanDescriptorWriter.cpp" />
+    <ClCompile Include="src\engine\VulkanComputePipeline.cpp" />
+    <ClCompile Include="src\engine\VulkanParticleSystem.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="shaders\compute.spv" />
@@ -176,6 +178,7 @@
     <ClInclude Include="src\engine\Mesh.h" />
     <ClInclude Include="src\engine\VulkanUtils.hpp" />
     <ClInclude Include="src\InstanceData.hpp" />
+    <ClInclude Include="src\Particle.hpp" />
     <ClInclude Include="src\Vertex.hpp" />
     <ClInclude Include="src\engine\vulkanBuffer.h" />
     <ClInclude Include="src\engine\VulkanTexture.h" />
@@ -183,6 +186,9 @@
     <ClInclude Include="src\engine\VulkanDescriptorPool.h" />
     <ClInclude Include="src\engine\VulkanDescriptorsetLayout.h" />
     <ClInclude Include="src\engine\VulkanDescriptorWriter.h" />
+    <ClInclude Include="src\engine\VulkanComputePipeline.h" />
+    <ClInclude Include="src\engine\VulkanParticleSystem.h" />
+    <ClInclude Include="src\VulkanConfig.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

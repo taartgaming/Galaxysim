@@ -41,6 +41,8 @@ VulkanTexture::VulkanTexture(VkDevice device, VkPhysicalDevice physicalDevice, V
     VulkanUtils::copyBufferToImage(device, commandPool, graphicsQueue, stagingBuffer.getBuffer(), image,
         static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
 
+    stagingBuffer.cleanup();
+
     generateMipmaps(image, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels, physicalDevice, device, commandPool, graphicsQueue);
 
 

@@ -38,8 +38,10 @@ void VulkanBuffer::map(VkDeviceSize size, VkDeviceSize offset) {
 }
 
 void VulkanBuffer::unmap() {
-    vkUnmapMemory(device, memory);
-    mapped = nullptr;
+    if (mapped) {
+        vkUnmapMemory(device, memory);
+        mapped = nullptr;
+    }
 }
 void VulkanBuffer::cleanup() {
     if (mapped) unmap();
